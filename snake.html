@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Smooth Snake</title>
+<style>
+:root{
+  --bg:#e9f5ec;
+  --panel:#ffffff;
+  --accent:#4caf50;
+  --border:#d7e6da;
+}
+body{
+  margin:0;
+  background:var(--bg);
+  font-family:Segoe UI, Arial, sans-serif;
+  height:100vh;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+}
+#layout{display:flex;gap:18px;align-items:flex-start;}
+canvas{
+  border-radius:14px;
+  box-shadow:0 10px 28px rgba(0,0,0,0.12);
+  background:#fff;
+}
+#sidePanel{
+  width:260px;
+  background:#fff;
+  border:1px solid var(--border);
+  border-radius:14px;
+  padding:14px;
+  box-shadow:0 6px 20px rgba(0,0,0,0.08);
+}
+.header{display:flex;justify-content:space-between;align-items:center;}
+.header h3{margin:0;color:#2e7d32;}
+#gear{cursor:pointer;opacity:0.7;}
+#gear:hover{opacity:1;}
+label{font-size:13px;margin-top:8px;display:block;}
+input,select{
+  width:100%;margin-top:4px;padding:5px;border-radius:6px;border:1px solid #cfd8dc;
+}
+button{
+  width:100%;padding:9px;margin-top:10px;border-radius:8px;border:none;
+  background:var(--accent);color:white;font-weight:600;cursor:pointer;
+}
+.small{font-size:13px;margin-top:6px;}
+#overlay{
+  position:fixed;inset:0;
+  backdrop-filter:blur(6px);
+  background:rgba(0,0,0,0.25);
+  display:none;justify-content:center;align-items:center;
+}
+#uiPanel{
+  width:320px;background:#fff;border-radius:14px;padding:18px;
+  box-shadow:0 12px 30px rgba(0,0,0,0.2);
+}
+</style>
+</head>
+<body>
+
+<div id="layout">
+  <canvas id="game"></canvas>
+
+  <div id="sidePanel">
+    <div class="header">
+      <h3>Game Settings</h3>
+      <div id="gear">⚙</div>
+    </div>
+
+    <label>Board Size (tiles)</label>
+    <input type="range" id="gridSize" min="10" max="40" value="18">
+    <div class="small">Tiles: <span id="gridSizeLabel">18</span></div>
+
+    <label>Board Pixel Size</label>
+    <input type="number" id="boardPixels" min="300" max="800" value="540">
+
+    <label>Apple Count</label>
+    <input type="number" id="appleCount" min="1" max="10" value="1">
+
+    <label>Start Speed</label>
+    <input type="number" id="startSpeed" value="5">
+
+    <label>Speed Multiplier</label>
+    <input type="number" id="speedMultiplier" step="0.01" value="1.05">
+
+    <button id="startBtn">Start Game</button>
+    <button id="fullscreenBtn">Toggle Fullscreen</button>
+
+    <div class="small">Score: <span id="score">0</span></div>
+    <div class="small">Highscore: <span id="highscore">0</span></div>
+  </div>
+</div>
+
+<div id="overlay">
+  <div id="uiPanel">
+    <h3>UI & Theme</h3>
+    <label>Preset</label>
+    <select id="themePreset">
+      <option value="classic">Classic</option>
+      <option value="dark">Dark</option>
+      <option value="neon">Neon</option>
+    </select>
+    <label>Light Board</label><input type="color" id="lightBoard">
+    <label>Dark Board</label><input type="color" id="darkBoard">
+    <label>Snake Body</label><input type="color" id="snakeColor">
+    <label>Snake Head</label><input type="color" id="snakeHeadColor">
+    <label>Apple</label><input type="color" id="appleColor">
+  </div>
+</div>
+
+<script>
+const canvas=document.getElementById("game");
+const ctx=canvas.getContext("2d");
+
+const gridSizeInput=document.getElementById("gridSize");
+const gridSizeLabel=document.getElementById("gridSizeLabel");
+const boardPixelsInput=document.getElementById("boardPixels");
+const appleCountInput=document.getElementById("appleCount");
+const startSpeedInput=document.getElementById("startSpeed");
+const speedMultiplierInput=document.getElementById("speedMultiplier");
+
+const startBtn=document.getElementById("startBtn");
+const fullscreenBtn=document.getElementById("fullscreenBtn");
+const scoreEl=document.getElementById("score");
+const highscoreEl=document.getElementById("highscore");
+
+const lightBoard=document.getElementById("lightBoard");
+const darkBoard=document.getElementById("darkBoard");
+const snakeColor=document.getElementById("snakeColor");
+const snakeHeadColor=document.getElementById("snakeHeadColor");
+const appleColor=document.getElementById("appleColor");
+
+let gridSize,boardPixels,tile;
+let snake,prevSnake,dir,nextDir,apples;
+let score=0,highscore=0;
+let speed,speedMultiplier,moveInterval;
+let running=false,paused=false,lastTime=0,interp=0;
+
+gridSizeInput.addEventListener("input",()=>gridSizeLabel.textContent=gridSizeInput.value);
+gridSizeInput.addEventListener("change",()=>{ if(!running){ resetGame(); draw(); }});
+
+function resetGame(){
+  gridSize=parseInt(gridSizeInput.value);
+  boardPixels=parseInt(boardPixelsInput.value);
+  canvas.width=canvas.height=boardPixels;
+  tile=boardPixels/gridSize;
+
+  snake=[{x:8,y:9},{x:7,y:9},{x:6,y:9}];
+  prevSnake=snake.map(s=>({...s}));
+  dir={x:1,y:0}; nextDir=dir;
+  score=0;
+  speed=parseFloat(startSpeedInput.value);
+  speedMultiplier=parseFloat(speedMultiplierInput.value);
+  moveInterval=1000/speed;
+  apples=[];
+  spawnApples(parseInt(appleCountInput.value));
+  updateScore();
+}
+
+function spawnApples(n){
+  while(apples.length<n){
+    let a;
+    do{
+      a={x:Math.floor(Math.random()*gridSize),y:Math.floor(Math.random()*gridSize)};
+    }while(
+      snake.some(s=>s.x===a.x&&s.y===a.y)||
+      apples.some(ap=>ap.x===a.x&&ap.y===a.y)
+    );
+    apples.push(a);
+  }
+}
+
+function step(){
+  prevSnake=snake.map(s=>({x:s.x,y:s.y}));
+  dir=nextDir;
+  const head={x:snake[0].x+dir.x,y:snake[0].y+dir.y};
+
+  if(head.x<0||head.y<0||head.x>=gridSize||head.y>=gridSize||
+     snake.some(s=>s.x===head.x&&s.y===head.y)){
+    running=false;
+    startBtn.textContent="Restart Game";
+    return;
+  }
+
+  snake.unshift(head);
+  const i=apples.findIndex(a=>a.x===head.x&&a.y===head.y);
+  if(i!==-1){
+    score++;
+    speed*=speedMultiplier;
+    moveInterval=1000/speed;
+    apples.splice(i,1);
+    spawnApples(parseInt(appleCountInput.value));
+  }else snake.pop();
+
+  updateScore();
+}
+
+function gameLoop(t){
+  if(!running||paused)return;
+  if(!lastTime) lastTime=t;
+  const delta=t-lastTime;
+  interp=Math.min(delta/moveInterval,1);
+
+  if(delta>moveInterval){
+    step();
+    lastTime=t;
+    interp=0;
+  }
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+
+function draw(){
+  for(let y=0;y<gridSize;y++){
+    for(let x=0;x<gridSize;x++){
+      ctx.fillStyle=(x+y)%2?lightBoard.value:darkBoard.value;
+      ctx.fillRect(x*tile,y*tile,tile,tile);
+    }
+  }
+
+  ctx.fillStyle=appleColor.value;
+  apples.forEach(a=>{
+    ctx.beginPath();
+    ctx.arc((a.x+0.5)*tile,(a.y+0.5)*tile,tile*0.3,0,Math.PI*2);
+    ctx.fill();
+  });
+
+  snake.forEach((seg,i)=>{
+    const prev=prevSnake[i]||seg;
+    const ix=prev.x+(seg.x-prev.x)*interp;
+    const iy=prev.y+(seg.y-prev.y)*interp;
+    ctx.fillStyle=i===0?snakeHeadColor.value:snakeColor.value;
+    ctx.beginPath();
+    ctx.roundRect(ix*tile,iy*tile,tile,tile,8);
+    ctx.fill();
+  });
+}
+
+function updateScore(){
+  scoreEl.textContent=score;
+  if(score>highscore){highscore=score;highscoreEl.textContent=highscore;}
+}
+
+document.addEventListener("keydown",e=>{
+  const map={
+    ArrowUp:{x:0,y:-1},w:{x:0,y:-1},
+    ArrowDown:{x:0,y:1},s:{x:0,y:1},
+    ArrowLeft:{x:-1,y:0},a:{x:-1,y:0},
+    ArrowRight:{x:1,y:0},d:{x:1,y:0}
+  };
+  if(map[e.key]&&running){
+    const nd=map[e.key];
+    if(nd.x!==-dir.x||nd.y!==-dir.y)nextDir=nd;
+  }
+});
+
+startBtn.onclick=()=>{
+  if(!running){
+    resetGame();
+    running=true;paused=false;
+    startBtn.textContent="Pause Game";
+    lastTime=0;
+    requestAnimationFrame(gameLoop);
+  }else if(!paused){
+    paused=true;startBtn.textContent="Resume Game";
+  }else{
+    paused=false;startBtn.textContent="Pause Game";
+    requestAnimationFrame(gameLoop);
+  }
+};
+
+fullscreenBtn.onclick=()=>{
+  if(!document.fullscreenElement)document.body.requestFullscreen();
+  else document.exitFullscreen();
+};
+
+const overlay=document.getElementById("overlay");
+document.getElementById("gear").onclick=()=>overlay.style.display="flex";
+overlay.onclick=e=>{if(e.target===overlay)overlay.style.display="none";};
+
+function setTheme(p){
+  if(p==="classic"){
+    lightBoard.value="#a5d6a7";darkBoard.value="#81c784";
+    snakeColor.value="#1e88e5";snakeHeadColor.value="#64b5f6";
+    appleColor.value="#e53935";
+  }
+  if(p==="dark"){
+    lightBoard.value="#2e7d32";darkBoard.value="#1b5e20";
+    snakeColor.value="#90caf9";snakeHeadColor.value="#e3f2fd";
+    appleColor.value="#ef5350";
+  }
+  if(p==="neon"){
+    lightBoard.value="#00e676";darkBoard.value="#00c853";
+    snakeColor.value="#00b0ff";snakeHeadColor.value="#80d8ff";
+    appleColor.value="#ff1744";
+  }
+  draw();
+}
+document.getElementById("themePreset").onchange=e=>setTheme(e.target.value);
+
+setTheme("classic");
+resetGame();
+draw();
+</script>
+</body>
+</html>
